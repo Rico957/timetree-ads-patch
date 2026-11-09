@@ -10,38 +10,38 @@ import app.timetree.patches.shared.ADS_AD_EMPTY
 import app.timetree.patches.shared.AdsStreamFingerprint
 import app.timetree.patches.shared.PACKAGE_NAME
 import app.timetree.patches.shared.RX_OBSERVABLE
+import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
 
 /**
- * Short-circuits the ad pipeline at its source.
+ * Short-circuits the ad pipeline at its source by making the ad stream lambda emit
+ * `AdsAdModel.Empty` instead of a real ad.
  *
- * `AdsStreamFingerprint` matches the `Function1.invoke(Object): Object` lambda that TimeTree
- * uses to build the `Observable<AdsAdModel>` for every ad placement (home calendar headline,
- * activities headline, event creation, event detail, ...).
+ * The lambda is located by [AdsStreamFingerprint] (an unobfuscated domain type it captures),
+ * so obfuscated class and method names never matter.
  *
- * The original body loads the downloaded ad config, branches on the placement type and then
- * emits either a real ad or a "premium upsell" pseudo ad. Replacing the body with
- * `Observable.just(AdsAdModel.Empty)` hands the UI layer the model it already knows how to
- * render as "there is no ad", so no banner, no card and no placeholder is ever drawn.
+ * To emit the empty stream the patch must call whatever RxJava factory the app itself was
+ * compiled against, with the exact descriptor. R8 renames `Observable.just` to something like
+ * `f` *and* narrows its return type to `ObservableJust`, and ART resolves calls on the exact
+ * name+descriptor pair, so a hand-written reference resolves to nothing. Three sources are
+ * tried in order:
  *
- * Every reference used by the injected code is taken from the target method itself:
+ * 1. a static RxJava call inside the lambda itself (copied verbatim),
+ * 2. any other static call in the lambda taking a single `Object`,
+ * 3. a static `(Object) -> Lio/reactivex/...` method found on `io.reactivex.Observable`.
  *
- * - the `AdsAdModel.Empty` singleton field is discovered from that class, because R8 renames
- *   the field (`a0` in 15.34.1) and only the class name is stable, and
- * - the `Observable.just(Object)` reference is copied verbatim out of the original body,
- *   because R8 renames `just` to `f` *and* narrows its return type to `ObservableJust`.
- *   Writing `Observable;->f(Ljava/lang/Object;)Lio/reactivex/Observable;` by hand would
- *   produce a method id that no class defines, and ART resolves calls on the exact
- *   name+descriptor pair, so the app would die with NoSuchMethodError at runtime.
+ * If none exists — which happens when upstream moves the ad stream off RxJava — the patch
+ * logs what it saw and stays out of the way instead of failing the whole patching run. The
+ * other two patches still apply, so the app ends up without splash ads and with every ad slot
+ * switch disabled.
  */
 @Suppress("unused")
 val removeInFeedAdsPatch = bytecodePatch(
     name = "Remove in-app ads",
     description = "Emits AdsAdModel.Empty for every ad placement, so calendar banners, " +
         "in-feed ad cards and premium-upsell ad slots are never rendered. " +
-        "Anchored on unobfuscated domain types and reuses the app's own method ids, " +
-        "so it survives minor app updates.",
+        "Anchored on unobfuscated domain types and reuses the app's own method ids.",
 ) {
     compatibleWith(
         Compatibility(
@@ -61,43 +61,80 @@ val removeInFeedAdsPatch = bytecodePatch(
             "AdsAdModel.Empty no longer exposes a static instance field",
         )
 
-        val originalInstructions = AdsStreamFingerprint.originalMethod.implementation
-            ?.instructions
-            ?: throw IllegalStateException("ad stream lambda has no body")
+        val original = AdsStreamFingerprint.originalMethod
+        val instructions = original.implementation?.instructions?.toList().orEmpty()
 
-        val justReference = originalInstructions
+        val staticCalls: List<MethodReference> = instructions
             .filterIsInstance<ReferenceInstruction>()
-            .map { it.reference }
-            .filterIsInstance<MethodReference>()
-            .firstOrNull { reference ->
-                reference.definingClass == RX_OBSERVABLE &&
-                    reference.name != "<init>" &&
-                    reference.parameterTypes.size == 1 &&
-                    reference.parameterTypes[0] == "Ljava/lang/Object;"
-            }
-            ?: throw IllegalStateException(
-                "the ad stream lambda no longer calls a static Observable factory",
-            )
+            .filter { it.opcode == Opcode.INVOKE_STATIC || it.opcode == Opcode.INVOKE_STATIC_RANGE }
+            .mapNotNull { it.reference as? MethodReference }
 
-        // Rebuild the exact descriptor the app itself uses, return type included.
-        val justCall = buildString {
-            append(justReference.definingClass)
-            append("->")
-            append(justReference.name)
-            append("(")
-            justReference.parameterTypes.forEach(::append)
-            append(")")
-            append(justReference.returnType)
+        val fromLambda = staticCalls
+            .firstOrNull { reference ->
+                reference.parameterTypes.size == 1 &&
+                    reference.parameterTypes[0] == "Ljava/lang/Object;" &&
+                    (reference.definingClass.startsWith("Lio/reactivex/") ||
+                        reference.returnType.startsWith("Lio/reactivex/"))
+            }
+            ?.let(::describe)
+            ?: staticCalls
+                .firstOrNull { reference ->
+                    reference.parameterTypes.size == 1 &&
+                        reference.parameterTypes[0] == "Ljava/lang/Object;"
+                }
+                ?.let(::describe)
+
+        val call = fromLambda ?: factoryFromObservableClass()
+
+        if (call == null) {
+            println(
+                "TimeTreeAdsPatch: 'Remove in-app ads' skipped. " +
+                    "Lambda ${original.name} in ${AdsStreamFingerprint.originalClassDef.type} " +
+                    "no longer calls a static RxJava factory, so the ad stream is built some " +
+                    "other way. Static calls seen: " +
+                    staticCalls.joinToString { describe(it) },
+            )
+            return@execute
         }
+
+        println("TimeTreeAdsPatch: 'Remove in-app ads' injecting $call")
 
         AdsStreamFingerprint.method.addInstructions(
             0,
             """
                 sget-object v0, $ADS_AD_EMPTY->${singleton.name}:$ADS_AD_EMPTY
-                invoke-static {v0}, $justCall
+                invoke-static {v0}, $call
                 move-result-object v0
                 return-object v0
             """,
         )
     }
+}
+
+private fun describe(reference: MethodReference): String = buildString {
+    append(reference.definingClass)
+    append("->")
+    append(reference.name)
+    append("(")
+    reference.parameterTypes.forEach { append(it) }
+    append(")")
+    append(reference.returnType)
+}
+
+/** Last resort: a static `(Object) -> Lio/reactivex/...` helper declared on Observable itself. */
+private fun factoryFromObservableClass(): String? = try {
+    classDefBy(RX_OBSERVABLE)
+        .methods
+        .firstOrNull { method ->
+            (method.accessFlags and ACC_STATIC) != 0 &&
+                method.parameterTypes.size == 1 &&
+                method.parameterTypes[0] == "Ljava/lang/Object;" &&
+                method.returnType.startsWith("Lio/reactivex/")
+        }
+        ?.let { method ->
+            method.definingClass + "->" + method.name +
+                "(" + method.parameterTypes.joinToString("") + ")" + method.returnType
+        }
+} catch (_: Exception) {
+    null
 }
