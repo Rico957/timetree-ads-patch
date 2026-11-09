@@ -56,6 +56,36 @@ def insert_after_locals(block: str, payload: str) -> str:
     return block[:cut] + "\n" + payload + "\n" + block[cut:]
 
 
+def find_empty_singleton(root: Path) -> str:
+    """R8 renames the AdsAdModel.Empty singleton field, so read its real name."""
+    for path in root.glob("smali*/**/*.smali"):
+        if path.name != "AdsAdModel$Empty.smali":
+            continue
+        text = path.read_text(encoding="utf-8", errors="surrogateescape")
+        m = re.search(
+            r"^\.field public static final (\w+):" + re.escape(ADS_EMPTY) + r"\s*$",
+            text,
+            re.M,
+        )
+        if m:
+            return m.group(1)
+    raise RuntimeError("AdsAdModel$Empty singleton field not found")
+
+
+def find_observable_just(body: str) -> str:
+    """Reuse the exact method id the app itself calls.
+
+    R8 turns Observable.just into `f` and narrows the return type to ObservableJust.
+    Hand-writing `Observable;->f(Ljava/lang/Object;)Lio/reactivex/Observable;` yields a
+    method id no class defines, and ART resolves on name+descriptor, so the app would
+    throw NoSuchMethodError at runtime.
+    """
+    m = re.search(r"Lio/reactivex/Observable;->(\w+)\(Ljava/lang/Object;\)(L[\w/$]+;)", body)
+    if not m:
+        raise RuntimeError("no static Observable factory call in the ad stream lambda")
+    return f"Lio/reactivex/Observable;->{m.group(1)}(Ljava/lang/Object;){m.group(2)}"
+
+
 def patch_ads_stream(root: Path) -> bool:
     for path in sorted(root.glob("smali*/**/*.smali")):
         try:
@@ -72,10 +102,13 @@ def patch_ads_stream(root: Path) -> bool:
             report("ads-stream", path, "skip")
             return True
 
+        singleton = find_empty_singleton(root)
+        just_call = find_observable_just(text)
+
         payload = (
             f"    {MARK_ADS} (ad stream -> AdsAdModel.Empty) ===\n"
-            f"    sget-object v0, {ADS_EMPTY}->a0:{ADS_EMPTY}\n"
-            f"    invoke-static {{v0}}, Lio/reactivex/Observable;->f(Ljava/lang/Object;)Lio/reactivex/Observable;\n"
+            f"    sget-object v0, {ADS_EMPTY}->{singleton}:{ADS_EMPTY}\n"
+            f"    invoke-static {{v0}}, {just_call}\n"
             f"    move-result-object v0\n"
             f"    return-object v0"
         )

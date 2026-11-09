@@ -12,17 +12,17 @@ import app.timetree.patches.shared.SplashAdsGateFingerprint
 /**
  * Kills the cold-start / foreground open ad.
  *
- * `SplashAdsActivity` is a dedicated, `singleTop` screen that TimeTree launches on top of
- * the launcher to show a full screen interstitial (image or video) before the calendar
- * appears. Its gate method already contains a "nothing to show -> finish()" path, which
- * is what the app itself does when no ad was sold. The patch forces that path every time,
- * so the ad screen opens and closes immediately instead of covering the calendar.
+ * `SplashAdsActivity` is a dedicated, `singleTop` screen that TimeTree launches on top of the
+ * launcher to show a full screen interstitial (image or video) before the calendar appears.
+ * Its gate method already contains a "nothing to show -> finish()" path, which is what the app
+ * itself does when no ad was sold. The patch forces that path every time, so the ad screen
+ * opens and closes immediately instead of covering the calendar.
  */
 @Suppress("unused")
 val removeSplashAdsPatch = bytecodePatch(
     name = "Remove splash/open ads",
     description = "Forces the splash ad screen to take its built-in \"no ad to show\" path, " +
-        "so no full screen ad covers the app on cold start. Fingerprints are validated against TimeTree 15.34.1.",
+        "so no full screen ad covers the app on cold start.",
 ) {
     compatibleWith(
         Compatibility(
