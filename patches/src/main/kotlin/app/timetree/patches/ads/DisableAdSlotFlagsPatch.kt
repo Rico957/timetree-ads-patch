@@ -5,28 +5,30 @@ import app.morphe.patcher.patch.ApkFileType
 import app.morphe.patcher.patch.AppTarget
 import app.morphe.patcher.patch.Compatibility
 import app.morphe.patcher.patch.bytecodePatch
+import app.timetree.patches.shared.ACC_STATIC
+import app.timetree.patches.shared.ADS_CONFIG_MODEL
 import app.timetree.patches.shared.AdsConfigConstructorFingerprint
 import app.timetree.patches.shared.PACKAGE_NAME
+import com.android.tools.smali.dexlib2.Opcode
 
 /**
  * Turns every server-driven ad slot in `AdsConfigModel` off.
  *
- * The downloaded ads config carries one boolean per placement
- * (`optout`, `enableDaily`, `enableCreation`, `enableActivities`,
- * `enableEventDetail`, and one unnamed extra flag). Feeding `false` into those
- * constructor parameters means the app itself concludes that no slot is
- * enabled, so list items for ads are never created and no empty placeholder is
- * left behind in the calendar / activities feed.
+ * The downloaded ads config carries one boolean per placement (`optout`, `enableDaily`,
+ * `enableMonthly`, `enableCreation`, `enableActivities`, `enableEventDetail`, plus the
+ * target-user / excluded-device markers). Feeding `false` into all of them makes the app
+ * conclude that no slot is enabled, so ad list items are never created and no empty
+ * placeholder is left behind in the calendar or the activities feed.
  *
- * This is the second layer of the patch. It keeps the UI cheap and consistent
- * even if a future app version changes the render pipeline but keeps feeding
- * from `AdsConfigModel`.
+ * The field list is read from the class at patch time, so obfuscated field names and the
+ * constructor's parameter order do not matter.
  */
 @Suppress("unused")
 val disableAdSlotFlagsPatch = bytecodePatch(
     name = "Disable ad slot flags",
-    description = "Forces every server-driven ad slot switch in AdsConfigModel to false, " +
-        "so no ad slot is created at all. Fingerprints are validated against TimeTree 15.34.1.",
+    description = "Forces every boolean in the server-driven AdsConfigModel to false, " +
+        "so no ad slot is created at all. Reads the fields at patch time, so it is not " +
+        "tied to obfuscated field names.",
 ) {
     compatibleWith(
         Compatibility(
@@ -39,16 +41,33 @@ val disableAdSlotFlagsPatch = bytecodePatch(
     )
 
     execute {
-        AdsConfigConstructorFingerprint.method.addInstructions(
-            0,
-            """
-                const/4 p4, 0x0
-                const/4 p5, 0x0
-                const/4 p6, 0x0
-                const/4 p7, 0x0
-                const/4 p8, 0x0
-                const/4 p9, 0x0
-            """,
-        )
+        val classDef = AdsConfigConstructorFingerprint.classDef
+        val method = AdsConfigConstructorFingerprint.method
+
+        val instructions = method.implementation?.instructions?.toList()
+            ?: throw IllegalStateException("AdsConfigModel.<init> has no body")
+        if (instructions.isEmpty() || instructions.last().opcode != Opcode.RETURN_VOID) {
+            throw IllegalStateException(
+                "AdsConfigModel.<init> does not end with return-void, refusing to guess",
+            )
+        }
+
+        val boolFields = classDef.fields.filter {
+            it.type == "Z" && (it.accessFlags and ACC_STATIC) == 0
+        }
+        if (boolFields.isEmpty()) {
+            throw IllegalStateException("AdsConfigModel has no boolean fields to disable")
+        }
+
+        // p1 is a String parameter that is already dead at this point of the constructor,
+        // so it can hold the zero constant without touching the register layout.
+        val body = buildString {
+            appendLine("const/4 p1, 0x0")
+            boolFields.forEach { field ->
+                appendLine("iput-boolean p1, p0, $ADS_CONFIG_MODEL->${field.name}:Z")
+            }
+        }
+
+        method.addInstructions(instructions.size - 1, body)
     }
 }
