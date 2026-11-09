@@ -7,7 +7,6 @@ import app.morphe.patcher.patch.Compatibility
 import app.morphe.patcher.patch.bytecodePatch
 import app.timetree.patches.shared.AdsConfigConstructorFingerprint
 import app.timetree.patches.shared.PACKAGE_NAME
-import app.timetree.patches.shared.TARGET_VERSION
 
 /**
  * Turns every server-driven ad slot in `AdsConfigModel` off.
@@ -27,15 +26,15 @@ import app.timetree.patches.shared.TARGET_VERSION
 val disableAdSlotFlagsPatch = bytecodePatch(
     name = "Disable ad slot flags",
     description = "Forces every server-driven ad slot switch in AdsConfigModel to false, " +
-        "so no ad slot is created at all.",
+        "so no ad slot is created at all. Fingerprints are validated against TimeTree 15.34.1.",
 ) {
     compatibleWith(
         Compatibility(
             packageName = PACKAGE_NAME,
             name = "TimeTree",
             description = "Shared calendar app. Patch targets the downloadable ads config.",
-            apkFileType = ApkFileType.XAPK,
-            targets = listOf(AppTarget(version = TARGET_VERSION)),
+            apkFileType = ApkFileType.APK,
+            targets = listOf(AppTarget(version = null)),
         ),
     )
 

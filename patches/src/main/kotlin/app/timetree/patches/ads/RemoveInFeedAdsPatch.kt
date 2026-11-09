@@ -8,7 +8,6 @@ import app.morphe.patcher.patch.bytecodePatch
 import app.timetree.patches.shared.ADS_AD_EMPTY
 import app.timetree.patches.shared.AdsStreamFingerprint
 import app.timetree.patches.shared.PACKAGE_NAME
-import app.timetree.patches.shared.TARGET_VERSION
 
 /**
  * Short-circuits the ad pipeline at its source.
@@ -27,7 +26,7 @@ import app.timetree.patches.shared.TARGET_VERSION
 val removeInFeedAdsPatch = bytecodePatch(
     name = "Remove in-app ads",
     description = "Emits AdsAdModel.Empty for every ad placement, so calendar banners, " +
-        "in-feed ad cards and premium-upsell ad slots are never rendered.",
+        "in-feed ad cards and premium-upsell ad slots are never rendered. Fingerprints are validated against TimeTree 15.34.1.",
 ) {
     compatibleWith(
         Compatibility(
@@ -35,8 +34,8 @@ val removeInFeedAdsPatch = bytecodePatch(
             name = "TimeTree",
             description = "Shared calendar app. Patch targets the ad pipeline of the " +
                 "free (non-Premium) build.",
-            apkFileType = ApkFileType.XAPK,
-            targets = listOf(AppTarget(version = TARGET_VERSION)),
+            apkFileType = ApkFileType.APK,
+            targets = listOf(AppTarget(version = null)),
         ),
     )
 

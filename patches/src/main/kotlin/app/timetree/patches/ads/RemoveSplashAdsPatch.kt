@@ -8,7 +8,6 @@ import app.morphe.patcher.patch.bytecodePatch
 import app.timetree.patches.shared.PACKAGE_NAME
 import app.timetree.patches.shared.SPLASH_ADS_ACTIVITY
 import app.timetree.patches.shared.SplashAdsGateFingerprint
-import app.timetree.patches.shared.TARGET_VERSION
 
 /**
  * Kills the cold-start / foreground open ad.
@@ -23,15 +22,15 @@ import app.timetree.patches.shared.TARGET_VERSION
 val removeSplashAdsPatch = bytecodePatch(
     name = "Remove splash/open ads",
     description = "Forces the splash ad screen to take its built-in \"no ad to show\" path, " +
-        "so no full screen ad covers the app on cold start.",
+        "so no full screen ad covers the app on cold start. Fingerprints are validated against TimeTree 15.34.1.",
 ) {
     compatibleWith(
         Compatibility(
             packageName = PACKAGE_NAME,
             name = "TimeTree",
             description = "Shared calendar app. Patch targets the open-ad screen.",
-            apkFileType = ApkFileType.XAPK,
-            targets = listOf(AppTarget(version = TARGET_VERSION)),
+            apkFileType = ApkFileType.APK,
+            targets = listOf(AppTarget(version = null)),
         ),
     )
 
