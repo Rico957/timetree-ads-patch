@@ -9,7 +9,6 @@ import app.timetree.patches.shared.ACC_STATIC
 import app.timetree.patches.shared.ADS_AD_EMPTY
 import app.timetree.patches.shared.AdsStreamFingerprint
 import app.timetree.patches.shared.PACKAGE_NAME
-import app.timetree.patches.shared.RX_OBSERVABLE
 import com.android.tools.smali.dexlib2.Opcode
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
@@ -84,7 +83,9 @@ val removeInFeedAdsPatch = bytecodePatch(
                 }
                 ?.let(::describe)
 
-        val call = fromLambda ?: factoryFromObservableClass()
+        // Two sources, both taken from the app itself, so the descriptor is always the one
+        // that build was compiled against.
+        val call = fromLambda
 
         if (call == null) {
             println(
@@ -121,20 +122,3 @@ private fun describe(reference: MethodReference): String = buildString {
     append(reference.returnType)
 }
 
-/** Last resort: a static `(Object) -> Lio/reactivex/...` helper declared on Observable itself. */
-private fun factoryFromObservableClass(): String? = try {
-    classDefBy(RX_OBSERVABLE)
-        .methods
-        .firstOrNull { method ->
-            (method.accessFlags and ACC_STATIC) != 0 &&
-                method.parameterTypes.size == 1 &&
-                method.parameterTypes[0] == "Ljava/lang/Object;" &&
-                method.returnType.startsWith("Lio/reactivex/")
-        }
-        ?.let { method ->
-            method.definingClass + "->" + method.name +
-                "(" + method.parameterTypes.joinToString("") + ")" + method.returnType
-        }
-} catch (_: Exception) {
-    null
-}
