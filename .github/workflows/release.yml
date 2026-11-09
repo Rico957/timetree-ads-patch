@@ -68,7 +68,10 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
         run: |
           chmod +x ./gradlew
-          ./gradlew :patches:build -Pversion=${{ steps.ver.outputs.version }} --no-daemon --stacktrace
+          # buildAndroid runs d8 and packs the patch classes into classes.dex inside the
+          # .mpp. Without it the bundle only carries JVM .class files, which Morphe on
+          # Android cannot load, and the source shows up with zero patches.
+          ./gradlew build buildAndroid -Pversion=${{ steps.ver.outputs.version }} --no-daemon --stacktrace
 
       - name: Collect bundle
         id: bundle

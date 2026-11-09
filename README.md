@@ -29,7 +29,7 @@ export GITHUB_ACTOR=<GitHub 用户名>
 export GITHUB_TOKEN=<read:packages 的 PAT>
 
 cd TimeTreeAdsPatch
-./gradlew :patches:build        # Windows: gradlew.bat :patches:build
+./gradlew build buildAndroid     # Windows: gradlew.bat build buildAndroid
 # 产物: patches/build/libs/patches-1.0.0.mpp
 ```
 
