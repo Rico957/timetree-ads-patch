@@ -74,11 +74,26 @@ jobs:
         id: bundle
         run: |
           set -euo pipefail
-          MPP_PATH="$(ls -1 patches/build/libs/patches-*.mpp | head -1)"
+          echo "--- patches/build/libs ---"
+          ls -l patches/build/libs || true
+          # The plugin also emits -javadoc / -sources variants with the .mpp suffix;
+          # the real bundle is the largest remaining one.
+          MPP_PATH="$(ls -S patches/build/libs/*.mpp 2>/dev/null \
+            | grep -Ev -- '-(javadoc|sources)\.mpp$' \
+            | head -1 || true)"
+          if [[ -z "${MPP_PATH}" ]]; then
+            echo "::error::no patch bundle found in patches/build/libs"
+            exit 1
+          fi
+          SIZE="$(stat -c%s "$MPP_PATH")"
+          if (( SIZE < 10240 )); then
+            echo "::error::${MPP_PATH} is only ${SIZE} bytes, that is not a usable bundle"
+            exit 1
+          fi
           MPP_NAME="$(basename "$MPP_PATH")"
           echo "path=${MPP_PATH}" >> "$GITHUB_OUTPUT"
           echo "name=${MPP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "found ${MPP_PATH} ($(stat -c%s "$MPP_PATH") bytes)"
+          echo "bundle: ${MPP_PATH} (${SIZE} bytes)"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
